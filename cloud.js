@@ -1,84 +1,72 @@
 /**
- * Supabase (versioned GT snapshots) and Google Drive (video source) glue.
- * Everything is optional: with an empty config.js the editor behaves exactly like upstream.
- * Depends on: config.js, supabase-js (window.supabase), fflate (window.fflate), decompressGzip() from app.js.
+ * Supabase glue (block queue) and the Google Drive video URL.
+ * Everything is optional: with an empty config.js the editor runs locally and every frame stays editable.
+ * Depends on: config.js and supabase-js (window.supabase).
+ * Server contract: supabase/migrations/*_gt_blocks.sql.  Error codes: GT000 not signed in, GT001 claim lost, GT002 bad argument, GT003 bad labels.
  */
 const GT_CFG = window.GT_CONFIG || {};
 let _sb = null;
-let _lastCloudSig = {};   // vid -> signature of the last payload uploaded (skip identical re-uploads)
 
 function cloudEnabled() {
   return !!(GT_CFG.supabaseUrl && GT_CFG.supabaseAnonKey && window.supabase);
 }
 
 function sb() {
-  if (!_sb) _sb = window.supabase.createClient(GT_CFG.supabaseUrl, GT_CFG.supabaseAnonKey, { auth: { persistSession: false } });
+  if (!_sb) _sb = window.supabase.createClient(GT_CFG.supabaseUrl, GT_CFG.supabaseAnonKey, { auth: { persistSession: true, autoRefreshToken: true } });
   return _sb;
 }
 
-async function gzipBytes(text) {
-  const raw = new TextEncoder().encode(text);
-  if (window.CompressionStream) {
-    const stream = new Blob([raw]).stream().pipeThrough(new CompressionStream("gzip"));
-    return new Uint8Array(await new Response(stream).arrayBuffer());
-  }
-  if (window.fflate && window.fflate.gzipSync) return window.fflate.gzipSync(raw);
-  throw new Error("GZIP compression not supported in this browser.");
+function cloudError(e) {
+  const err = new Error(e.message || String(e));
+  err.code = e.code || "";
+  return err;
 }
 
-function cheapSig(text) {   // length + 32-bit FNV-1a: only to avoid uploading the same state twice
-  let h = 0x811c9dc5;
-  for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
-  return `${text.length}:${h}`;
+// Anonymous sign-in: one stable identity per browser (kept in localStorage), so a reload resumes the same claim.
+async function cloudSignIn() {
+  const s = await sb().auth.getSession();
+  if (s.data && s.data.session) return s.data.session.user.id;
+  const r = await sb().auth.signInAnonymously();
+  if (r.error) throw cloudError(r.error);
+  return r.data.user.id;
 }
 
-function gtAuthor() {
-  let a = "";
-  try { a = localStorage.getItem("gt_author") || ""; } catch (e) { /* storage blocked */ }
-  if (!a) {
-    a = (window.prompt("Tên của bạn (ghi kèm mỗi bản lưu trên Supabase):", "") || "").trim().slice(0, 80);
-    try { if (a) localStorage.setItem("gt_author", a); } catch (e) { /* storage blocked */ }
-  }
-  return a;
+async function rpc(fn, args) {
+  const r = await sb().rpc(fn, args);
+  if (r.error) throw cloudError(r.error);
+  return r.data;
 }
 
-// Upload one snapshot (append-only: a row in gt_snapshots + a gzip JSON object in the bucket).
-async function cloudSaveSnapshot(vid, payload, editedBoxes) {
-  const body = JSON.stringify(payload);   // {vid, maxFrames, roster, frames}: the same object that goes to localStorage, minus savedAt
-  const sig = cheapSig(body);
-  if (_lastCloudSig[vid] === sig) return "unchanged";
-  const bytes = await gzipBytes(body);
-  const path = `${vid}/${new Date().toISOString().replace(/[:.]/g, "-")}.json.gz`;
-  const up = await sb().storage.from(GT_CFG.bucket || "gt-snapshots").upload(path, bytes, { contentType: "application/gzip", upsert: false });
-  if (up.error) throw up.error;
-  const ins = await sb().from("gt_snapshots").insert({ video: vid, author: gtAuthor(), edited_boxes: editedBoxes, object_path: path, bytes: bytes.length });
-  if (ins.error) throw ins.error;
-  _lastCloudSig[vid] = sig;
-  return "saved";
+// -> the claimed block row (also when the caller already held one) or null when no block is free.
+async function cloudClaim(video, prefer, name) {
+  const row = await rpc("gt_claim_block", { p_video: video, p_prefer: prefer || 0, p_name: name });
+  return row && row.block !== null && row.block !== undefined ? row : null;
 }
 
-// Newest snapshot of a video -> { meta, payload } or null.
-async function cloudLoadLatest(vid) {
-  const q = await sb().from("gt_snapshots").select("object_path,saved_at,author,edited_boxes").eq("video", vid).order("saved_at", { ascending: false }).limit(1);
-  if (q.error) throw q.error;
-  if (!q.data.length) return null;
-  const dl = await sb().storage.from(GT_CFG.bucket || "gt-snapshots").download(q.data[0].object_path);
-  if (dl.error) throw dl.error;
-  const payload = JSON.parse(await decompressGzip(await dl.data.arrayBuffer()));
-  _lastCloudSig[vid] = cheapSig(JSON.stringify({ vid: payload.vid, maxFrames: payload.maxFrames, roster: payload.roster, frames: payload.frames }));
-  return { meta: q.data[0], payload };
+async function cloudSaveDraft(video, block, labels) {
+  await rpc("gt_save_draft", { p_video: video, p_block: block, p_labels: labels });
 }
 
-/**
- * Which saved state does the editor open?  local = parsed localStorage payload (has .savedAt) or null,
- * cloud = { meta, payload } from cloudLoadLatest() or null.  Return "cloud", "local" or "base" (the csv.gz shipped in the repo).
- */
-function chooseSource(local, cloud) {
-  // TODO(human): decide the policy when BOTH exist (e.g. two people editing, or an offline edit newer than the cloud copy).
-  // Safe default for now: the cloud copy wins, then the browser copy, then the shipped base.
-  if (cloud && cloud.payload && cloud.payload.frames) return "cloud";
-  if (local && local.frames) return "local";
-  return "base";
+async function cloudComplete(video, block, labels) {
+  return rpc("gt_complete_block", { p_video: video, p_block: block, p_labels: labels });
+}
+
+async function cloudRelease(video, block) {
+  await rpc("gt_release_block", { p_video: video, p_block: block });
+}
+
+// Light status list for the timeline (no labels).
+async function cloudProgress(video) {
+  const r = await sb().from("gt_block_status").select("block,first_frame,last_frame,status,claimed_by,claimed_name,done_name,done_at").eq("video", video).order("block", { ascending: true }).limit(1000);
+  if (r.error) throw cloudError(r.error);
+  return r.data;
+}
+
+// Labels of one block (a draft or the final ones) -> {frames: {...}} or null.
+async function cloudBlockLabels(video, block) {
+  const r = await sb().from("gt_blocks").select("labels").eq("video", video).eq("block", block).maybeSingle();
+  if (r.error) throw cloudError(r.error);
+  return r.data ? r.data.labels : null;
 }
 
 // Google Drive: a file id or a share link -> a direct media URL (UNVERIFIED for large files: see README, "Drive video").
@@ -88,3 +76,5 @@ function driveVideoUrl(idOrLink) {
   const id = m ? (m[1] || m[2]) : String(idOrLink).trim();
   return `https://drive.usercontent.google.com/download?id=${encodeURIComponent(id)}&export=download&confirm=t`;
 }
+
+if (typeof module !== "undefined" && module.exports) module.exports = { driveVideoUrl };

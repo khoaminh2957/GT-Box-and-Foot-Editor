@@ -11,7 +11,7 @@
       "use": "@vercel/static"
     },
     {
-      "src": "{app.js,cloud.js,config.js,style.css}",
+      "src": "{app.js,cloud.js,config.js,logic.js,style.css}",
       "use": "@vercel/static"
     }
   ],
