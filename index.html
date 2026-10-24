@@ -29,13 +29,13 @@
     <section class="viewport" aria-label="Khung hình">
       <div class="stage">
         <canvas id="videoCanvas" width="1280" height="720"></canvas>
-        <video id="videoElement" playsinline muted preload="auto" hidden></video>
+        <video id="videoElement" playsinline muted preload="auto"></video>
         <div id="viewNotice" class="notice" hidden></div>
         <div id="videoBanner" class="banner">
           <span id="dropzoneStatus">Chưa có video.</span>
-          <label class="link-btn">Chọn file .MP4
-            <input type="file" id="videoFileInput" accept="video/mp4,video/*" hidden>
-          </label>
+          <button id="pickVideoBtn" class="link-btn">Chọn file .MP4</button>
+          <button id="reopenVideoBtn" class="link-btn" hidden>Mở lại file đã chọn</button>
+          <input type="file" id="videoFileInput" accept="video/mp4,video/*" hidden>
         </div>
         <div id="loadingOverlay" class="loading"><span id="loadingText">Đang tải…</span></div>
       </div>

@@ -71,3 +71,23 @@ test("homography: identical to the Python exporter to 0.01 cm (golden values pri
 test("status counts", () => {
   assert.deepEqual(L.countStatuses([{ status: "done" }, { status: "open" }, { status: "done" }, { status: "claimed" }]), { open: 1, claimed: 1, done: 2 });
 });
+
+test("a video of the wrong length is reported, the right one (and one frame of rounding slack) is not", () => {
+  const FPS = 29.97002997002997;
+  assert.equal(L.videoLengthProblem(384.958867, 11536, FPS), "");            // IMG_0114 as measured: 384.958867 s
+  assert.equal(L.videoLengthProblem(11823 / FPS, 11823, FPS), "");
+  assert.equal(L.videoLengthProblem(11537 / FPS, 11536, FPS), "");
+  assert.match(L.videoLengthProblem(11823 / FPS, 11536, FPS), /khoảng 11823 frame nhưng nhãn cần 11536/);
+  assert.match(L.videoLengthProblem(60, 11536, FPS), /đúng file/);
+});
+
+test("frameTime lands in the middle of the display interval of the frame, after the video's start offset", () => {
+  const FPS = 29.97002997002997, start = 0.041;
+  // IMG_0114 as measured in Chrome: frame k is presented at start + k / fps, so decoded frame 3000 (label 3001) spans [100.141, 100.1747)
+  const t = L.frameTime(3001, start, FPS);
+  assert.ok(t > start + 3000 / FPS && t < start + 3001 / FPS, `${t}`);
+  assert.ok(Math.abs(t - (start + 3000.5 / FPS)) < 1e-12);
+  assert.ok(Math.abs(L.frameTime(1, 0, FPS) - 0.5 / FPS) < 1e-12, "no offset: half a frame in");
+  const asked = (f) => Math.floor((L.frameTime(f, start, FPS) - start) * FPS);      // index of the frame a player showing the grid start + k / fps picks
+  for (const f of [1, 2, 3001, 11536]) assert.equal(asked(f), f - 1);
+});

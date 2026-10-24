@@ -1,5 +1,5 @@
 /**
- * Supabase glue (block queue) and the Google Drive video URL.
+ * Supabase glue (block queue).
  * Everything is optional: with an empty config.js the editor runs locally and every frame stays editable.
  * Depends on: config.js and supabase-js (window.supabase).
  * Server contract: supabase/migrations/*_gt_blocks.sql.  Error codes: GT000 not signed in, GT001 claim lost, GT002 bad argument, GT003 bad labels.
@@ -68,13 +68,3 @@ async function cloudBlockLabels(video, block) {
   if (r.error) throw cloudError(r.error);
   return r.data ? r.data.labels : null;
 }
-
-// Google Drive: a file id or a share link -> a direct media URL (UNVERIFIED for large files: see README, "Drive video").
-function driveVideoUrl(idOrLink) {
-  if (!idOrLink) return "";
-  const m = String(idOrLink).match(/\/d\/([\w-]{10,})|[?&]id=([\w-]{10,})/);
-  const id = m ? (m[1] || m[2]) : String(idOrLink).trim();
-  return `https://drive.usercontent.google.com/download?id=${encodeURIComponent(id)}&export=download&confirm=t`;
-}
-
-if (typeof module !== "undefined" && module.exports) module.exports = { driveVideoUrl };
