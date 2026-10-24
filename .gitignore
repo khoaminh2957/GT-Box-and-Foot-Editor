@@ -29,3 +29,7 @@ videos_v4_preview/*
 !videos_source/.gitkeep
 !videos_v4_preview/.gitkeep
 .vercel
+
+# Test and export output
+.pytest_cache/
+export/

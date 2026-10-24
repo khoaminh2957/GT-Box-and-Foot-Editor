@@ -1,0 +1,63 @@
+name: Export labels
+
+# Merges every finished block from Supabase into IMG_0114.txt / IMG_0115.txt (BTC 5 columns) and IMG_0114_gt_boxes.csv.gz, validates them,
+# attaches them to the run and uploads them to Google Drive.  A video is exported under its final name only when ALL its blocks are done;
+# the schedule polls for that.  Run it by hand with "partial" to get a _DRAFT export of what exists so far.
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+    inputs:
+      partial:
+        description: "Also export videos that are not finished (files get a _DRAFT suffix)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: export
+  cancel-in-progress: false
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    env:
+      GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+      GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+      GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Merge, validate and write the output files
+        id: export
+        run: |
+          set +e
+          python scripts/gt_export.py --out export ${{ inputs.partial && '--partial' || '' }}
+          code=$?
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          case $code in
+            0) echo "::notice::exported" ;;
+            2) echo "::notice::not every block is done yet: nothing exported for the unfinished video(s)" ;;
+            3) echo "::notice::Supabase is not configured in config.js: nothing exported" ;;
+            *) echo "::error::export failed (exit $code)"; exit "$code" ;;
+          esac
+          exit 0
+      - name: Keep the files with this run
+        if: always() && hashFiles('export/*') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: gt-export
+          path: export/
+      - name: Upload to Google Drive
+        if: hashFiles('export/*') != ''
+        run: |
+          set +e
+          python scripts/drive_upload.py export/*
+          code=$?
+          if [ $code -eq 3 ]; then echo "::notice::Google credentials are not set: files stay in the run artifact only"; exit 0; fi
+          exit $code

@@ -1,156 +1,169 @@
 <!DOCTYPE html>
 <html lang="vi">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>3x3 Basketball Ground-Truth Box & Foot Editor (Web Edition)</title>
-  <meta name="description" content="In-browser 3x3 Basketball Ground-Truth Bounding Box & Foot Midpoint Trajectory Editor with Official BTC Homography."/>
-  <link rel="stylesheet" href="style.css"/>
-  <!-- Fast client-side GZIP decompression library fallback -->
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GT Editor · IMG_0114 / IMG_0115</title>
+  <meta name="description" content="Gán nhãn hộp và điểm chân cầu thủ 3x3 theo khối frame, nhiều người cùng làm.">
+  <link rel="stylesheet" href="style.css">
   <script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
 </head>
 <body>
+<div class="app">
 
-  <!-- Header -->
-  <header>
-    <div class="logo-wrap">
-      <h1>🏀 3x3 GT Editor</h1>
-      <span class="badge-tag">Web Edition</span>
-    </div>
-
-    <div class="ctrl-group">
-      <label for="vidSelect" style="font-size:12px; color:#94a3b8; font-weight:600;">Video:</label>
-      <select id="vidSelect" onchange="changeVideo()">
-        <option value="IMG_0114" selected>IMG_0114 (11,536 frames)</option>
-        <option value="IMG_0115">IMG_0115 (11,823 frames)</option>
+  <header class="topbar">
+    <span class="app-name">GT Editor</span>
+    <label class="inline-field">Video
+      <select id="vidSelect">
+        <option value="IMG_0114" selected>IMG_0114 · 11.536 frame</option>
+        <option value="IMG_0115">IMG_0115 · 11.823 frame</option>
       </select>
-    </div>
-
-    <div class="ctrl-group">
-      <button onclick="stepFrame(-100)" title="Lùi 100 frame">-100</button>
-      <button onclick="stepFrame(-10)" title="Phím tắt Q">-10 (Q)</button>
-      <button onclick="stepFrame(-1)" title="Phím tắt A hoặc Mũi tên trái">-1 (A/←)</button>
-      <button id="playBtn" class="primary" onclick="togglePlay()">▶ Phát (Space)</button>
-      <button onclick="stepFrame(1)" title="Phím tắt D hoặc Mũi tên phải">+1 (D/→)</button>
-      <button onclick="stepFrame(10)" title="Phím tắt E">+10 (E)</button>
-      <button onclick="stepFrame(100)" title="Tiến 100 frame">+100</button>
-    </div>
-
-    <div class="ctrl-group">
-      <select id="speedSelect" title="Tốc độ phát">
-        <option value="66">0.5x</option>
-        <option value="33" selected>1.0x</option>
-        <option value="16">2.0x</option>
-      </select>
-      <button class="warn" onclick="jumpBookmark(-1)" title="Phím tắt P">⏮ Prev Occlusion (P)</button>
-      <button class="warn" onclick="jumpBookmark(1)" title="Phím tắt N">⏭ Next Occlusion (N)</button>
-    </div>
-
-    <div class="ctrl-group">
-      <button class="success" onclick="saveGT()" title="Lưu vào bộ nhớ trình duyệt (Ctrl+S)">💾 Lưu (Ctrl+S)</button>
-      <button class="primary" onclick="downloadBTCTxt()" title="Xuất file chuẩn BTC 5 cột">⬇️ Tải BTC (.txt)</button>
-      <button onclick="downloadFullCSV()" title="Xuất toàn bộ bảng box và tọa độ">⬇️ CSV</button>
-      <button onclick="resetGT()" title="Khôi phục dữ liệu gốc" style="color:#f87171;">🔄 Reset</button>
-    </div>
-
-    <span id="saveStatus" class="status-pill">Sẵn sàng</span>
+    </label>
+    <span id="topBlock" class="top-block"></span>
+    <span class="spacer"></span>
+    <span id="connState" class="conn" title="Trạng thái kết nối Supabase">Cục bộ</span>
   </header>
 
-  <!-- Workspace -->
-  <main class="main-wrap">
-    <!-- Canvas Area -->
-    <div class="canvas-viewport">
-      <canvas id="videoCanvas" width="1280" height="720"></canvas>
-      <video id="videoElement" style="display:none;" playsinline muted preload="auto"></video>
-
-      <!-- Video Upload / Status Box -->
-      <label id="dropzoneCard" class="video-dropzone" for="videoFileInput" title="Nhấp để chọn file video từ máy tính">
-        <span>📹</span>
-        <span id="dropzoneStatus">Chưa chọn video IMG_0114.MP4</span>
-        <span class="kbd">Chọn Video (.MP4)</span>
-        <input type="file" id="videoFileInput" accept="video/mp4,video/*" style="display:none;"/>
-      </label>
-    </div>
-
-    <!-- Sidebar Controls -->
-    <aside class="sidebar">
-      <!-- 1. Player Selection -->
-      <div class="card">
-        <h3>1. Chọn Cầu Thủ <span style="font-size:11px; color:#60a5fa;">[Phím 1..6]</span></h3>
-        <div id="playerBtns" class="player-grid"></div>
-        <div style="margin-top:10px; display:flex; gap:6px;">
-          <button id="drawModeBtn" style="flex:1;" onclick="toggleDrawMode()">✏️ Vẽ Box Mới (W)</button>
-          <button style="flex:1;" onclick="copyPrevFrame()">📋 Copy Frame Trước (C)</button>
+  <main class="workspace">
+    <section class="viewport" aria-label="Khung hình">
+      <div class="stage">
+        <canvas id="videoCanvas" width="1280" height="720"></canvas>
+        <video id="videoElement" playsinline muted preload="auto" hidden></video>
+        <div id="viewNotice" class="notice" hidden></div>
+        <div id="videoBanner" class="banner">
+          <span id="dropzoneStatus">Chưa có video.</span>
+          <label class="link-btn">Chọn file .MP4
+            <input type="file" id="videoFileInput" accept="video/mp4,video/*" hidden>
+          </label>
         </div>
+        <div id="loadingOverlay" class="loading"><span id="loadingText">Đang tải…</span></div>
       </div>
+    </section>
 
-      <!-- 2. Box & Foot Midpoint Info -->
-      <div class="card">
-        <h3>2. Tọa Độ & Điểm Chân</h3>
-        <div id="boxInfo" class="box-stat">Đang tải...</div>
-        <div style="font-size:11px; color:#94a3b8; margin-top:6px; line-height:1.4;">
-          * Điểm chân luôn tự động lấy <b>trung điểm cạnh đáy</b> <code>((x1+x2)/2, y2)</code> và tự động chiếu qua ma trận Homography chuẩn BTC.
+    <aside class="panel">
+      <section id="blockPanel">
+        <h2>Khối công việc</h2>
+        <p id="blockLocal" class="muted">Chế độ cục bộ: chưa cấu hình Supabase nên mọi frame đều sửa được và dữ liệu chỉ lưu trong trình duyệt này.</p>
+        <div id="blockCloud" hidden>
+          <label class="field">Tên người gán nhãn
+            <input id="annotatorName" maxlength="40" autocomplete="off" placeholder="Tên hiển thị, tối đa 40 ký tự">
+          </label>
+          <dl id="blockState" class="kv"></dl>
+          <div class="row">
+            <button id="claimBtn" class="primary">Nhận khối</button>
+            <button id="doneBtn" class="primary" hidden>Xong khối</button>
+            <button id="releaseBtn" class="quiet danger" hidden>Trả lại</button>
+          </div>
+          <p id="progressText" class="muted"></p>
         </div>
-      </div>
+      </section>
 
-      <!-- 3. Range Interpolation & Swapping -->
-      <div class="card">
-        <h3>3. Nội Suy & Hoán Đổi Đoạn</h3>
-        <div style="display:flex; gap:6px; align-items:center; margin-bottom:8px;">
-          <button onclick="setRangeStart()" style="padding:4px 8px;">Đặt Đầu [I]</button>
-          <input id="fStart" type="number" value="1" style="width:74px; text-align:center; font-weight:600;"/>
-          <span style="color:#64748b;">→</span>
-          <input id="fEnd" type="number" value="10" style="width:74px; text-align:center; font-weight:600;"/>
-          <button onclick="setRangeEnd()" style="padding:4px 8px;">Đặt Cuối [O]</button>
-        </div>
-        <button class="primary" style="width:100%; margin-bottom:6px;" onclick="interpolateRange()">
-          ✨ Nội Suy Box Cầu Thủ [f_đầu..f_cuối] (K)
-        </button>
-        <button class="purple" style="width:100%; margin-bottom:10px;" onclick="interpolateFromAnchor()">
-          🔑 Nội Suy Với Anchor Frame Hiện Tại (J)
-        </button>
-        <div style="display:flex; gap:6px; align-items:center;">
-          <select id="swapA" style="flex:1;"></select>
-          <span style="color:#64748b;">⇄</span>
-          <select id="swapB" style="flex:1;"></select>
-          <button class="warn" onclick="swapRange()" style="padding:5px 12px;">Đổi ID</button>
-        </div>
-      </div>
+      <section>
+        <h2>Cầu thủ</h2>
+        <table id="playerTable" class="grid">
+          <thead><tr><th>Phím</th><th>Cầu thủ</th><th>Trạng thái</th><th class="num">Sân (cm)</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </section>
 
-      <!-- 4. Shortcut Help -->
-      <div class="card">
-        <h3>Phím Tắt Thao Tác Nhanh</h3>
-        <div style="font-size:11.5px; line-height:1.8; color:#cbd5e1;">
-          <div><span class="kbd">Kéo giữa Box</span>: Di chuyển vị trí Box</div>
-          <div><span class="kbd">Kéo 8 chốt</span>: Kéo giãn cạnh đáy / đỉnh / hông</div>
-          <div><span class="kbd">W</span>: Bật/tắt quét chuột vẽ Box mới</div>
-          <div><span class="kbd">C</span>: Copy Box từ frame trước & tiến +1 frame</div>
-          <div><span class="kbd">I</span> / <span class="kbd">O</span> / <span class="kbd">K</span>: Đặt f_đầu / f_cuối / Nội suy tuyến tính</div>
-          <div><span class="kbd">J</span>: Nội suy anchor từ frame hiện tại</div>
-          <div><span class="kbd">N</span> / <span class="kbd">P</span>: Nhảy tới đoạn khuất / nội suy tiếp/trước</div>
-          <div><span class="kbd">Ctrl+S</span>: Lưu dữ liệu vào trình duyệt</div>
+      <section>
+        <h2>Ô đang chọn</h2>
+        <dl id="boxInfo" class="kv"></dl>
+        <div class="row">
+          <button id="drawModeBtn">Vẽ lại box (W)</button>
+          <button id="copyPrevBtn">Chép từ frame trước (C)</button>
         </div>
-      </div>
+      </section>
+
+      <section>
+        <h2>Nội suy và đổi nhãn theo đoạn</h2>
+        <div class="range-grid">
+          <span class="muted">Từ frame</span><input id="fStart" type="number" value="1" aria-label="Frame đầu"><button id="setStartBtn" class="quiet">Lấy frame này (I)</button>
+          <span class="muted">Đến frame</span><input id="fEnd" type="number" value="10" aria-label="Frame cuối"><button id="setEndBtn" class="quiet">Lấy frame này (O)</button>
+        </div>
+        <div class="row">
+          <button id="interpBtn">Nội suy đoạn (K)</button>
+          <button id="anchorBtn">Nội suy qua frame này (J)</button>
+        </div>
+        <div class="swap-row">
+          <select id="swapA" aria-label="Cầu thủ thứ nhất"></select>
+          <span class="muted">với</span>
+          <select id="swapB" aria-label="Cầu thủ thứ hai"></select>
+          <button id="swapBtn">Đổi nhãn</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>Tệp trên máy này</h2>
+        <div class="row">
+          <button id="saveBtn">Lưu (Ctrl+S)</button>
+          <button id="txtBtn">Tải .txt BTC</button>
+          <button id="csvBtn">Tải .csv</button>
+          <button id="resetBtn" class="quiet danger">Về dữ liệu gốc</button>
+        </div>
+        <p class="muted small">Tệp cuối cùng gửi ban tổ chức không lấy từ đây mà do workflow xuất sau khi mọi khối đã xong.</p>
+      </section>
+
+      <details class="keys">
+        <summary>Phím tắt</summary>
+        <table class="grid keys-table">
+          <tr><td>1 – 6</td><td>Chọn cầu thủ</td></tr>
+          <tr><td>A, D hoặc ←, →</td><td>Lùi, tiến 1 frame (Shift: 10)</td></tr>
+          <tr><td>Q, E</td><td>Lùi, tiến 10 frame</td></tr>
+          <tr><td>Space</td><td>Phát, dừng</td></tr>
+          <tr><td>N, P</td><td>Đoạn khuất, nội suy kế tiếp, trước đó</td></tr>
+          <tr><td>W</td><td>Bật, tắt vẽ lại box</td></tr>
+          <tr><td>C</td><td>Chép box từ frame trước rồi sang frame sau</td></tr>
+          <tr><td>I, O, K</td><td>Đặt đầu, đặt cuối, nội suy tuyến tính</td></tr>
+          <tr><td>J</td><td>Nội suy qua frame đang xem</td></tr>
+          <tr><td>Ctrl+S</td><td>Lưu bản nháp</td></tr>
+          <tr><td>Ctrl+Enter</td><td>Xong khối</td></tr>
+        </table>
+      </details>
     </aside>
   </main>
 
-  <!-- Footer Scrubber -->
-  <footer>
-    <span style="font-size:12px; color:#94a3b8; font-weight:600;">Frame:</span>
-    <input id="frameInput" type="number" value="1" min="1" max="11823" style="width:84px; text-align:center; font-weight:700;" onchange="goToFrame(parseInt(this.value, 10))"/>
-    <span id="maxFrameLbl" class="frame-badge">/ 11,536</span>
-    <input id="scrubber" type="range" min="1" max="11823" value="1" oninput="goToFrame(parseInt(this.value, 10))"/>
+  <footer class="bottom">
+    <div class="transport">
+      <button data-step="-100">−100</button>
+      <button data-step="-10">−10</button>
+      <button data-step="-1">−1</button>
+      <button id="playBtn" class="wide">Phát</button>
+      <button data-step="1">+1</button>
+      <button data-step="10">+10</button>
+      <button data-step="100">+100</button>
+      <label class="inline-field">Frame
+        <input id="frameInput" type="number" value="1" min="1" max="11823">
+      </label>
+      <span id="maxFrameLbl" class="muted mono">/ 11.536</span>
+      <select id="speedSelect" aria-label="Tốc độ phát">
+        <option value="66">0,5×</option>
+        <option value="33" selected>1×</option>
+        <option value="16">2×</option>
+      </select>
+      <button id="prevMarkBtn" class="quiet">Đoạn khuất trước (P)</button>
+      <button id="nextMarkBtn" class="quiet">Đoạn khuất sau (N)</button>
+      <input id="scrubber" type="range" min="1" max="11823" value="1" aria-label="Thanh tua">
+    </div>
+    <canvas id="timeline" height="22" aria-label="Tiến độ theo khối"></canvas>
+    <div id="legend" class="legend">
+      <span><i class="sw sw-done"></i>Đã xong</span>
+      <span><i class="sw sw-mine"></i>Của bạn</span>
+      <span><i class="sw sw-others"></i>Người khác đang làm</span>
+      <span><i class="sw sw-open"></i>Còn trống</span>
+    </div>
+    <div class="statusbar">
+      <span id="saveStatus" class="status">Sẵn sàng</span>
+      <span class="spacer"></span>
+      <span id="cursorInfo" class="mono"></span>
+    </div>
   </footer>
 
-  <!-- Loading Overlay -->
-  <div id="loadingOverlay" class="loading-overlay">
-    <div class="spinner"></div>
-    <div id="loadingText" style="font-size:14px; font-weight:600; color:#38bdf8;">Đang khởi tạo trình biên tập...</div>
-  </div>
-
-  <script src="config.js"></script>
-  <script src="cloud.js"></script>
-  <script src="app.js"></script>
+</div>
+<script src="config.js"></script>
+<script src="logic.js"></script>
+<script src="cloud.js"></script>
+<script src="app.js"></script>
 </body>
 </html>

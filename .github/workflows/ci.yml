@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: Web logic and design lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Syntax check
+        run: for f in app.js cloud.js logic.js config.js; do node --check "$f"; done
+      - name: Unit tests (block rules, payloads, homography)
+        run: node --test tests/js/*.test.cjs
+      - name: Design lint (known visual tells of generated UIs)
+        run: python scripts/design_lint.py
+
+  python:
+    name: Export, Drive upload, lint tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest
+      - run: python -m pytest -q tests
+
+  sql:
+    name: Block queue on real Postgres
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: pw
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+        working-directory: tests/sql
+      - run: npm test
+        working-directory: tests/sql
+        env:
+          PG_URL: postgres://postgres:pw@localhost:5432/postgres
+
+  e2e:
+    name: Browser workflow (mock Supabase)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+        working-directory: tests/e2e
+      - name: Run against the Chrome installed on the runner
+        run: npm test
+        working-directory: tests/e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-screenshots
+          path: tests/e2e/out/
+          if-no-files-found: ignore
