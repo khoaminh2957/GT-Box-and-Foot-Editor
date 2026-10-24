@@ -29,6 +29,7 @@ let playing = false;
 let playInterval = null;
 let drawNewBoxMode = false;
 let hasVideo = false;
+let videoStart = 0;       // presentation time of the video's first frame, measured when a file is attached
 let dragState = null;
 let loadSeq = 0;
 
@@ -379,7 +380,7 @@ function changeVideo() {
   hasVideo = false; video.removeAttribute("src");
   $("videoBanner").className = "banner"; $("dropzoneStatus").textContent = `Chưa có video ${curVid}.`;
   openVideo(curVid);
-  attachDriveVideo(curVid);
+  restoreVideo(curVid);
 }
 
 function goToFrame(f) {
@@ -387,8 +388,8 @@ function goToFrame(f) {
   curFrame = f;
   $("frameInput").value = f; $("scrubber").value = f;
   if (hasVideo && video.readyState >= 1) {
-    const t = (f - 1) / FPS;
-    if (Math.abs(video.currentTime - t) > 0.01) video.currentTime = t;
+    const t = frameTime(f, videoStart, FPS);
+    if (Math.abs(video.currentTime - t) > 0.004) video.currentTime = t;
   }
   renderCanvas(); updatePlayerTable(); updateBoxInfo(); updateNotice(); drawTimeline();
   ensureFinalLabels(f);
@@ -686,34 +687,104 @@ function downloadFullCSV() {
   setStatus(`Đã tải ${curVid}_gt_boxes.csv.`);
 }
 
-// ---- video ------------------------------------------------------------------------------------------------------------------
-function attachVideoUrl(url, label, onFail) {
-  video.src = url; video.load();
-  video.onloadeddata = () => {
-    hasVideo = true; $("dropzoneStatus").textContent = `Đang dùng: ${label}`; $("videoBanner").className = "banner ok";
-    goToFrame(curFrame); setStatus(`Đã kết nối video ${label}.`);
-  };
-  video.onerror = () => { if (onFail) onFail(); };
+// ---- video: always a file from this computer; the chosen file is remembered (File System Access API: Chrome, Edge) -------------------------
+// Playing it straight from Google Drive does not work from another site: Drive answers 403 / HTML to browser media requests (Sec-Fetch-Site: cross-site), see README.
+let pendingHandle = null;
+
+const handleDB = () => new Promise((res, rej) => {
+  const r = indexedDB.open("gt-editor", 1);
+  r.onupgradeneeded = () => r.result.createObjectStore("handles");
+  r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+});
+
+async function rememberHandle(vid, handle) {
+  try {
+    const db = await handleDB();
+    await new Promise((res, rej) => { const tx = db.transaction("handles", "readwrite"); tx.objectStore("handles").put(handle, vid); tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
+  } catch (e) { console.warn("Không nhớ được file video:", e); }
 }
 
-function attachDriveVideo(vid) {
-  const link = (window.GT_CONFIG && window.GT_CONFIG.driveVideos || {})[vid];
-  if (!link) return;
-  $("dropzoneStatus").textContent = `Đang mở ${vid} từ Google Drive…`;
-  attachVideoUrl(driveVideoUrl(link), `${vid} (Google Drive)`, () => {
-    hasVideo = false; video.removeAttribute("src"); $("videoBanner").className = "banner";
-    $("dropzoneStatus").textContent = `Drive không phát được ${vid}. Hãy chọn file từ máy.`;
-    setStatus(`Video Drive lỗi (${vid}); chọn file từ máy.`, "warn");
+async function recallHandle(vid) {
+  try {
+    const db = await handleDB();
+    return await new Promise((res, rej) => { const rq = db.transaction("handles").objectStore("handles").get(vid); rq.onsuccess = () => res(rq.result || null); rq.onerror = () => rej(rq.error); });
+  } catch (e) { return null; }
+}
+
+// Presentation time of the first frame, read from the frame callback of a seek to 0; null when the browser cannot tell.
+function measureVideoStart() {
+  return new Promise((res) => {
+    if (!("requestVideoFrameCallback" in video)) { res(null); return; }
+    const timer = setTimeout(() => res(null), 3000);
+    video.requestVideoFrameCallback((now, meta) => { clearTimeout(timer); res(meta.mediaTime); });
+    video.currentTime = 0;
   });
 }
 
+function attachVideoUrl(url, label) {
+  video.src = url; video.load();
+  videoStart = 0;
+  video.onloadeddata = async () => {
+    video.onloadeddata = null;
+    const start = await measureVideoStart();
+    videoStart = start === null ? 0 : start;
+    hasVideo = true; $("dropzoneStatus").textContent = `Đang dùng: ${label}`; $("videoBanner").className = "banner ok";
+    goToFrame(curFrame);
+    const problems = [];
+    if (start === null) problems.push("Không đo được thời điểm bắt đầu của video: khung hình có thể lệch 1 đến 2 frame so với nhãn.");
+    if (!label.toUpperCase().includes(curVid)) problems.push(`Tên file "${label}" không chứa ${curVid}: kiểm tra đã chọn đúng video chưa.`);
+    const len = videoLengthProblem(video.duration, TOTAL_FRAMES[curVid], FPS);
+    if (len) problems.push(len);
+    if (problems.length) setStatus(problems.join(" "), "warn"); else setStatus(`Đã kết nối video ${label} (frame đầu bắt đầu ở ${videoStart.toFixed(3)} s).`);
+  };
+  video.onerror = () => setStatus("Trình duyệt không phát được file này (cần MP4 H.264).", "error");
+}
+
 function handleVideoFile(file) { if (file) attachVideoUrl(URL.createObjectURL(file), file.name); }
+
+async function pickVideo() {
+  if (!window.showOpenFilePicker) { $("videoFileInput").click(); return; }
+  try {
+    const [h] = await window.showOpenFilePicker({ types: [{ description: "Video MP4", accept: { "video/mp4": [".mp4", ".MP4"] } }], multiple: false });
+    await rememberHandle(curVid, h);
+    handleVideoFile(await h.getFile());
+  } catch (e) { if (e.name !== "AbortError") { console.warn(e); $("videoFileInput").click(); } }
+}
+
+async function openRemembered() {
+  const h = pendingHandle;
+  if (!h) return;
+  $("reopenVideoBtn").hidden = true;
+  try { handleVideoFile(await h.getFile()); }
+  catch (e) { setStatus(`Không mở lại được ${h.name}: hãy chọn lại file.`, "warn"); }
+}
+
+// Reopen the file chosen last time for this video: straight away when the browser still allows it, else after one click.
+async function restoreVideo(vid) {
+  $("reopenVideoBtn").hidden = true; pendingHandle = null;
+  const h = await recallHandle(vid);
+  if (!h || vid !== curVid) return;
+  pendingHandle = h;
+  let perm = "prompt";
+  try { perm = await h.queryPermission({ mode: "read" }); } catch (e) { /* not supported */ }
+  if (perm === "granted") await openRemembered();
+  else { $("reopenVideoBtn").textContent = `Mở lại ${h.name}`; $("reopenVideoBtn").hidden = false; }
+}
+
+$("pickVideoBtn").addEventListener("click", pickVideo);
+$("reopenVideoBtn").addEventListener("click", async () => {
+  try { if ((await pendingHandle.requestPermission({ mode: "read" })) === "granted") await openRemembered(); } catch (e) { console.warn(e); }
+});
 $("videoFileInput").addEventListener("change", (e) => { if (e.target.files.length) handleVideoFile(e.target.files[0]); });
 window.addEventListener("dragover", (e) => e.preventDefault());
-window.addEventListener("drop", (e) => {
+window.addEventListener("drop", async (e) => {
   e.preventDefault();
+  const item = e.dataTransfer.items && e.dataTransfer.items[0];
+  const handleRequest = item && item.getAsFileSystemHandle ? item.getAsFileSystemHandle() : null;   // has to be requested during the event
   const f = e.dataTransfer.files[0];
-  if (f && (f.type.startsWith("video/") || /\.mp4$/i.test(f.name))) handleVideoFile(f);
+  if (!f || !(f.type.startsWith("video/") || /\.mp4$/i.test(f.name))) return;
+  handleVideoFile(f);
+  try { const h = handleRequest && await handleRequest; if (h && h.kind === "file") await rememberHandle(curVid, h); } catch (err) { /* dropped from somewhere that gives no handle */ }
 });
 video.addEventListener("seeked", renderCanvas);
 
@@ -774,4 +845,4 @@ if (cloudOn) {
 
 // ---- start ------------------------------------------------------------------------------------------------------------------
 openVideo(curVid);
-attachDriveVideo(curVid);
+restoreVideo(curVid);

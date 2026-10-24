@@ -23,7 +23,7 @@ async function person(name) {
   page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/.test(m.text())) page.errors.push(m.text()); });
   await page.route("**/supabase-js@*/**", (r) => r.fulfill({ contentType: "text/javascript", body: MOCK }));
   await page.route("**/fflate@*/**", (r) => r.fulfill({ contentType: "text/javascript", body: "" }));
-  await page.route("**/config.js", (r) => r.fulfill({ contentType: "text/javascript", body: `window.GT_CONFIG = { supabaseUrl: "http://mock", supabaseAnonKey: "k", driveVideos: {} };` }));
+  await page.route("**/config.js", (r) => r.fulfill({ contentType: "text/javascript", body: `window.GT_CONFIG = { supabaseUrl: "http://mock", supabaseAnonKey: "k" };` }));
   page.on("dialog", (d) => d.accept());
   await page.goto(server.url + "/");
   await page.waitForFunction(() => document.getElementById("connState").textContent.includes("Đã kết nối") && typeof groundTruth[1] === "object" && Object.keys(groundTruth[1] || {}).length === 6);
@@ -169,6 +169,32 @@ test("releasing a block keeps the draft for the next person", async () => {
   await claim(d, "Dung");
   assert.equal(await myBlock(d), 2);
   assert.deepEqual(await entry(d, 101), edited, "Dung starts from Binh's draft");
+});
+
+
+test("the video file chosen last time is reopened, or offered with one click when the browser wants a gesture", async () => {
+  const p = await person("Em");
+  // an Origin Private File System handle stands in for a picked file: same interface (getFile, queryPermission), and it can be stored in IndexedDB
+  const reopened = await p.evaluate(async () => {
+    const root = await navigator.storage.getDirectory(), fh = await root.getFileHandle("IMG_0114.MP4", { create: true });
+    const w = await fh.createWritable(); await w.write("not a real video"); await w.close();
+    await rememberHandle("IMG_0114", fh);
+    let name = null; const orig = handleVideoFile; handleVideoFile = (f) => { name = f.name; };
+    await restoreVideo("IMG_0114"); handleVideoFile = orig;
+    return { name, buttonHidden: document.getElementById("reopenVideoBtn").hidden };
+  });
+  assert.deepEqual(reopened, { name: "IMG_0114.MP4", buttonHidden: true }, "permission still granted: opened without a click");
+
+  const offered = await p.evaluate(async () => {
+    let name = null; const orig = handleVideoFile, origRecall = recallHandle; handleVideoFile = (f) => { name = f.name; };
+    recallHandle = async () => ({ name: "IMG_0114.MP4", queryPermission: async () => "prompt", requestPermission: async () => "granted", getFile: async () => new File(["x"], "IMG_0114.MP4") });
+    await restoreVideo("IMG_0114");
+    const before = { name, shown: !document.getElementById("reopenVideoBtn").hidden, text: document.getElementById("reopenVideoBtn").textContent };
+    document.getElementById("reopenVideoBtn").click(); await new Promise((r) => setTimeout(r, 100));
+    handleVideoFile = orig; recallHandle = origRecall;
+    return { before, after: name, hiddenAfter: document.getElementById("reopenVideoBtn").hidden };
+  });
+  assert.deepEqual(offered, { before: { name: null, shown: true, text: "Mở lại IMG_0114.MP4" }, after: "IMG_0114.MP4", hiddenAfter: true });
 });
 
 test("no script errors on any page", () => {

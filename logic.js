@@ -85,6 +85,18 @@ function overlayFrames(groundTruth, payload) {
   }
 }
 
+// Time (seconds) at which a video whose first frame is presented at `start` shows label frame f (frame 1 = first decoded frame): the middle of that frame's display interval.
+// The first frame of IMG_0114 is presented at 0.041 s, not 0; seeking to (f - 1) / fps showed the frame two places too early in Chrome (see README).
+function frameTime(f, start, fps) {
+  return start + (f - 0.5) / fps;
+}
+
+// Does the chosen video have the number of frames the labels were made for?  -> a message, or "" when it fits.
+function videoLengthProblem(durationSeconds, expectedFrames, fps, tolerance = 2) {
+  const n = Math.round(durationSeconds * fps);
+  return Math.abs(n - expectedFrames) > tolerance ? `Video có khoảng ${n} frame nhưng nhãn cần ${expectedFrames}: kiểm tra đã chọn đúng file chưa.` : "";
+}
+
 function countStatuses(rows) {
   const n = { open: 0, claimed: 0, done: 0 };
   for (const r of rows) n[r.status] = (n[r.status] || 0) + 1;
@@ -92,5 +104,5 @@ function countStatuses(rows) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { H_IMG2COURT, imgToCourt, BLOCK_SIZE, blockOfFrame, blockRange, canEditFrame, rangeInsideBlock, buildBlockPayload, validateBlockFrames, overlayFrames, countStatuses };
+  module.exports = { H_IMG2COURT, imgToCourt, BLOCK_SIZE, blockOfFrame, blockRange, canEditFrame, rangeInsideBlock, buildBlockPayload, validateBlockFrames, overlayFrames, frameTime, videoLengthProblem, countStatuses };
 }

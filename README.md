@@ -42,10 +42,20 @@ The workflow `Export labels` runs every 30 minutes (and by hand), attaches the f
 
    Drive uses an OAuth refresh token and not a service account: a service account has no storage quota in a personal My Drive.
    Publish the OAuth consent screen ("In production"), otherwise Google expires the token after 7 days. The files go to a Drive folder named `GT Editor output`, created by the script.
-3. **Drive video (optional).** Share `IMG_0114.MP4` / `IMG_0115.MP4` as *Anyone with the link* and put the ids or links in `config.js` (`driveVideos`).
-   *Unverified:* Drive may refuse range requests or throttle large files, which would make frame-accurate seeking unreliable. The editor says so when the video does not play and the file picker keeps working.
+3. **Video.** Each person downloads `IMG_0114.MP4` / `IMG_0115.MP4` once from the organizers' folder, picks the file in the editor ("Chọn file .MP4") and the editor remembers it
+   (File System Access API: Chrome and Edge; Firefox and Safari ask again each visit). The editor warns when the file name does not contain the video id or the video does not have the
+   expected 11,536 / 11,823 frames.
 
-Not verified against the real services: the Supabase project, the Google Drive upload (both are tested against local stand-ins), and playing a video from Drive.
+   *Frame alignment.* The first frame of these MP4s is not presented at 0 s (IMG_0114: 0.041 s, IMG_0115: 0.034 s, read from the browser's frame callback), so seeking to `(f - 1) / fps` showed the
+   frame two places too early: in Chrome 156 the displayed frame matched decoded frame `f - 3` at all 14 tested positions of IMG_0114. The editor now measures the start time of each file and seeks to the middle of
+   the frame's interval; afterwards the displayed frame is decoded frame `f - 1` at 14 of 14 positions (IMG_0114) and 8 of 8 (IMG_0115), compared with sequentially decoded OpenCV frames on the pixels that move.
+   Only headless Chrome was tested; if a browser cannot report the start time the editor says so (the frames may then be one or two off).
+
+   *Why not stream it from Google Drive:* a direct Drive link plays with `curl` (HTTP 206, byte ranges work) but not from a page on another site. Replaying a browser's media request with `curl`
+   gives HTTP 403 or an HTML page as soon as `Sec-Fetch-Site: cross-site` (which a browser always sends) is present, and Chrome 156 reports `ERR_BLOCKED_BY_ORB` for the `<video>`.
+   Tested without a Google login; why Drive does this was not investigated. Supabase Storage would play, but its free plan allows 50 MB per file and the videos are 150 and 154 MB.
+
+Not verified against the real services: the Supabase project and the Google Drive upload (both are tested against local stand-ins).
 
 ## CI/CD (`.github/workflows`)
 
