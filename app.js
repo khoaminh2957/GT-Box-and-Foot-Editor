@@ -88,26 +88,27 @@ async function loadGroundTruth(vid) {
   loadingOverlay.style.display = "flex";
   loadingText.textContent = `Đang tải Ground Truth cho ${vid}...`;
 
-  // Check LocalStorage cache first
+  // Saved state: Supabase snapshot and/or browser copy (cloud.js decides which one wins), else the shipped base
   const localKey = `gt_v4_${vid}`;
-  const cached = localStorage.getItem(localKey);
-  if (cached) {
-    try {
-      const parsed = JSON.parse(cached);
-      if (parsed && parsed.frames && parsed.maxFrames) {
-        groundTruth = parsed.frames;
-        maxFrames = parsed.maxFrames;
-        roster = ROSTERS[vid] || parsed.roster;
-        selectedIdent = roster[0];
-        calculateBookmarks();
-        initUI();
-        loadingOverlay.style.display = "none";
-        setStatus(`Đã nạp bản lưu từ trình duyệt (${vid})`);
-        return;
-      }
-    } catch (e) {
-      console.warn("Failed to parse cached GT:", e);
-    }
+  let local = null;
+  try { local = JSON.parse(localStorage.getItem(localKey) || "null"); } catch (e) { console.warn("Failed to parse cached GT:", e); }
+  let cloud = null;
+  if (cloudEnabled()) {
+    loadingText.textContent = `Đang tải bản lưu trên Supabase (${vid})...`;
+    try { cloud = await cloudLoadLatest(vid); } catch (e) { console.warn("Supabase load failed:", e); }
+  }
+  const pick = chooseSource(local, cloud);
+  const saved = pick === "cloud" ? cloud.payload : (pick === "local" ? local : null);
+  if (saved && saved.frames && saved.maxFrames) {
+    groundTruth = saved.frames;
+    maxFrames = saved.maxFrames;
+    roster = ROSTERS[vid] || saved.roster;
+    selectedIdent = roster[0];
+    calculateBookmarks();
+    initUI();
+    loadingOverlay.style.display = "none";
+    setStatus(pick === "cloud" ? `Đã nạp bản lưu Supabase (${vid}, ${cloud.meta.author || "?"}, ${cloud.meta.saved_at.slice(0, 16).replace("T", " ")})` : `Đã nạp bản lưu từ trình duyệt (${vid})`);
+    return;
   }
 
   try {
@@ -244,6 +245,7 @@ function changeVideo() {
   document.getElementById("dropzoneCard").className = "video-dropzone";
   video.removeAttribute("src");
   loadGroundTruth(curVid);
+  attachDriveVideo(curVid);
 }
 
 // Frame Navigation
@@ -720,10 +722,16 @@ function saveGT() {
     frames: groundTruth
   };
   try {
-    localStorage.setItem(`gt_v4_${curVid}`, JSON.stringify(payload));
+    localStorage.setItem(`gt_v4_${curVid}`, JSON.stringify({ ...payload, savedAt: new Date().toISOString() }));
     setStatus(`Đã lưu trình duyệt (${editedCount} box đã sửa)`);
   } catch (e) {
     setStatus("Bộ nhớ localStorage đầy! Hãy xuất file .txt để sao lưu.", false);
+  }
+  if (cloudEnabled()) {
+    const vid = curVid;
+    cloudSaveSnapshot(vid, payload, editedCount)
+      .then((r) => setStatus(r === "saved" ? `Đã lưu Supabase (${vid}, ${editedCount} box đã sửa)` : `Supabase đã có đúng bản này (${vid})`))
+      .catch((err) => { console.error("Supabase save failed:", err); setStatus(`Lưu Supabase thất bại: ${err.message || err}. Bản trình duyệt vẫn còn.`, false); });
   }
 }
 
@@ -782,18 +790,35 @@ function downloadFullCSV() {
 // Video File Picker & Drag-and-Drop
 const videoFileInput = document.getElementById("videoFileInput");
 
-function handleVideoFile(file) {
-  if (!file) return;
-  const url = URL.createObjectURL(file);
+function attachVideoUrl(url, label, onFail) {
   video.src = url;
   video.load();
   video.onloadeddata = () => {
     hasVideo = true;
-    dropzoneStatus.textContent = `Đã kết nối: ${file.name}`;
+    dropzoneStatus.textContent = `Đã kết nối: ${label}`;
     document.getElementById("dropzoneCard").className = "video-dropzone loaded";
     goToFrame(curFrame);
-    setStatus(`Đã kết nối video: ${file.name}`);
+    setStatus(`Đã kết nối video: ${label}`);
   };
+  video.onerror = () => { if (onFail) onFail(); };
+}
+
+function handleVideoFile(file) {
+  if (!file) return;
+  attachVideoUrl(URL.createObjectURL(file), file.name);
+}
+
+// Video from Google Drive when config.js names one for this video; the file picker above always remains as the fallback.
+function attachDriveVideo(vid) {
+  const link = (window.GT_CONFIG && window.GT_CONFIG.driveVideos || {})[vid];
+  if (!link) return;
+  dropzoneStatus.textContent = `Đang mở ${vid} từ Google Drive...`;
+  attachVideoUrl(driveVideoUrl(link), `${vid} (Google Drive)`, () => {
+    hasVideo = false;
+    video.removeAttribute("src");
+    dropzoneStatus.textContent = `Không phát được ${vid} từ Drive. Hãy chọn file từ máy (.MP4)`;
+    setStatus(`Video Drive lỗi (${vid}); chọn file từ máy.`, false);
+  });
 }
 
 videoFileInput.addEventListener("change", (e) => {
@@ -859,3 +884,4 @@ video.addEventListener("seeked", () => {
 
 // Initialize on Load
 loadGroundTruth(curVid);
+attachDriveVideo(curVid);
