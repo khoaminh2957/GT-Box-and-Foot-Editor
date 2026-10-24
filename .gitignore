@@ -28,3 +28,4 @@ videos_v4_preview/*
 *.MOV
 !videos_source/.gitkeep
 !videos_v4_preview/.gitkeep
+.vercel
