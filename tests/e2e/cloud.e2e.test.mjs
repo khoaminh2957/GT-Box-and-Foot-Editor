@@ -36,7 +36,7 @@ const myBlock = (p) => p.evaluate(() => (myBlock ? myBlock.block : null));
 async function claim(p, name) {
   await p.fill("#annotatorName", name);
   await p.click("#claimBtn");
-  await p.waitForFunction(() => myBlock !== null);
+  await p.waitForFunction(() => myBlock !== null && /Khối \d+ ·/.test(document.getElementById("topBlock").textContent));   // state and screen, not only the variable
 }
 async function dragSelected(p, dx = 30, dy = 8) {
   await p.evaluate(() => document.activeElement && document.activeElement.blur());

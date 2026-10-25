@@ -180,13 +180,14 @@ async function claimNext(preferBlock) {
   try {
     const row = await cloudClaim(curVid, preferBlock || 0, name);
     if (!row) { myBlock = null; setStatus("Không còn khối trống ở video này.", "warn"); await refreshProgress(); return; }
-    myBlock = row;
-    const draft = await cloudBlockLabels(curVid, row.block);
+    const draft = await cloudBlockLabels(curVid, row.block);       // the block becomes editable only once its draft is in place, else an early edit would be overwritten by it
     if (draft) overlayFrames(groundTruth, draft);
-    dirty = false; lastRenew = Date.now();
+    myBlock = row; dirty = false; lastRenew = Date.now();
     calculateBookmarks();
+    updateBlockUI();
     goToFrame(row.first_frame);
     setStatus(`Bạn đang gán khối ${row.block + 1} (frame ${row.first_frame}–${row.last_frame}).`);
+    busy = false; updateBlockUI();                 // refreshing the progress bar is not part of the claim: a save pressed meanwhile must not be dropped
     await refreshProgress();
   } catch (e) { cloudProblem(e); } finally { busy = false; updateBlockUI(); }
 }
@@ -195,7 +196,7 @@ async function saveDraft(manual) {
   if (!cloudOn) return saveLocal();
   if (!myBlock) { if (manual) setStatus("Chưa nhận khối nên không có gì để lưu.", "warn"); return; }
   if (!dirty && !manual) return;
-  if (busy) return;
+  if (busy) { if (manual) setStatus("Đang nhận hoặc khoá khối, thử lưu lại sau giây lát.", "warn"); return; }
   busy = true;
   try {
     await cloudSaveDraft(curVid, myBlock.block, buildBlockPayload(groundTruth, roster, myBlock.first_frame, myBlock.last_frame));
