@@ -79,6 +79,11 @@ jobs:
       - name: Run against the Chrome installed on the runner
         run: npm test
         working-directory: tests/e2e
+      - name: Again with 400 ms of latency on every backend call (the tests must not depend on timing)
+        run: npm test
+        working-directory: tests/e2e
+        env:
+          MOCK_LATENCY_MS: "400"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

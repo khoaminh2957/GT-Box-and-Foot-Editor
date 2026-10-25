@@ -75,6 +75,7 @@ export async function startServer(root) {
     const url = new URL(req.url, "http://x");
     if (url.pathname.startsWith("/__mock/")) {
       let body = ""; for await (const c of req) body += c;
+      if (Number(process.env.MOCK_LATENCY_MS)) await new Promise((r) => setTimeout(r, Number(process.env.MOCK_LATENCY_MS)));      // slow-network stand-in: the browser tests must not depend on timing
       const json = body ? JSON.parse(body) : {};
       const uid = req.headers["x-uid"] || null;
       let out;
